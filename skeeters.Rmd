@@ -1,0 +1,280 @@
+
+---
+title: Mosquitos
+author: 
+  - Lucia
+fig_height: 2.6
+fig_width: 4
+header-includes: \usepackage{longtable}
+highlight: zenburn
+latex_engine: xelatex
+output:
+  pdf_document:
+    includes:
+      in_header: mystyle.sty
+  html_document: default
+tables: yes
+toc: yes
+---
+
+```{r, echo = FALSE, warning = FALSE, message = FALSE, comment = NA, error= FALSE }
+# No scientific notation
+options(scipen=999)
+
+#####
+# PACKAGES
+#####
+library(dplyr)
+library(xtable)
+library(ggplot2)
+library(knitr)
+library(png)
+library(grid)
+library(extrafont)
+library(tidyr)
+library(gridExtra)
+library(maptools)
+library(rgeos)
+library(ggmap)
+library(ggthemes)
+
+loadfonts(device = 'postscript', quiet = TRUE)
+
+# BASIC KNITR OPTIONS
+opts_chunk$set(comment = NA, echo = FALSE, warning = FALSE, message = FALSE, error = FALSE, fig.height = 3, fig.align='center')
+options(xtable.comment = FALSE)
+```
+
+```{r}
+# Load data
+if('cleaned_data.RData' %in% dir()){
+  load('cleaned_data.RData')
+} else {
+  # Data
+  load('Proc_Mosq_data_20012016.RData')
+  # Get spatial
+  #####
+  # GET SPATIAL DATA
+  moz3 <- getData('GADM', country = 'MOZ', level = 3)
+  maputo <- moz3[moz3@data$NAME_1 %in% c('Maputo', 'Maputo City'),]
+  # Fortify maputo
+  maputo_fortified <- fortify(maputo, region = 'NAME_3')
+  # Fortify moz3
+  moz3_fortified <- fortify(moz3, region = 'NAME_3')
+  
+  # Satelite-based atlas map (for health care workers)
+if('tempmap.RData' %in% dir('/tmp')){
+  load('/tmp/tempmap.RData')
+} else {
+  map <- get_map(location = coordinates(maputo)[1,],
+                maptype = 'satellite',
+                zoom = 8)
+  save('map', file = '/tmp/tempmap.RData')
+}
+
+  save.image('cleaned_data.RData')
+}
+
+```
+
+
+
+
+```{r, fig.align='center', fig.height = 3}
+# TITLE MAP
+ggplot() +
+  coord_map() +
+  geom_polygon(data = moz3_fortified,
+       aes(x = long, y =lat, group = group), fill = 'grey', color = 'white') +
+    geom_polygon(data = maputo_fortified,
+       aes(x = long, y =lat, group = group), fill = 'darkred', color = NA, alpha = 0.6) +
+  theme_tufte() +
+  theme(axis.ticks.length = unit(0.001, "mm")) + labs(x=NULL, y=NULL) +
+  theme(axis.line=element_blank(),
+      axis.text.x=element_blank(),
+      axis.text.y=element_blank(),
+      axis.ticks=element_blank(),
+      axis.title.x=element_blank(),
+      axis.title.y=element_blank(),
+      # legend.position="none",
+      panel.background=element_blank(),
+      panel.border=element_blank(),
+      panel.grid.major=element_blank(),
+      panel.grid.minor=element_blank(),
+      plot.background=element_blank())
+```
+
+Full code at https://github.com/joebrew/skeeters
+
+\newpage 
+
+```{r}
+
+# Clean up type
+species$a5species <- tolower(species$a5species)
+species$a5species <- 
+  ifelse(species$a5species == 'marshallil', 'marshallii',
+         ifelse(species$a5species == 'salbai', 'salbaii',
+                ifelse(species$a5species == 'ziemani', 'zimani',
+                       species$a5species)))
+
+
+# Get just bare bones data
+df <- species %>%
+  mutate(date = as.Date(Date_fill),
+         lat = as.numeric(GPS_LAT),
+         lng = as.numeric(GPS_LNG)) %>%
+  filter(TRAP_WORKING == 1) %>%
+  dplyr::select(date, a5species, lng, lat)
+
+```
+
+## Over time
+
+```{r}
+temp <- df %>%
+  group_by(date) %>%
+  summarise(n = n())
+
+ggplot(data = temp,
+       aes(x = date, y = n)) +
+  geom_point(alpha = 0.4) +
+  geom_smooth() +
+  xlab('Date') +
+  ylab('Specimens') +
+  ggtitle('Mosquitos over time') +
+  theme_economist()
+```
+
+## Over time by type
+
+```{r, fig.height = 6}
+temp <- df %>%
+  group_by(date, species = a5species) %>%
+  summarise(n = n())
+
+ggplot(data = temp,
+       aes(x = date, y = n)) +
+  geom_point(alpha = 0.4) +
+  geom_line(alpha = 0.2) +
+  geom_smooth() +
+  xlab('Date') +
+  ylab('Specimens') +
+  ggtitle('Mosquitos over time') +
+  theme_bw() +
+  facet_wrap(~ species, ncol = 4) +
+      theme(axis.text.x = element_text(angle = 90, 
+                                     hjust = 1, 
+                                     size = 6)) 
+```
+
+## Over time by space
+
+```{r, fig.height = 7}
+# By location, month
+df$month <- format(df$date, '%m')
+
+# Group by month, location
+temp <- df %>%
+  group_by(month, lng, lat) %>%
+  summarise(Specimens = n()) %>%
+  ungroup %>%
+  mutate(month= paste0('Month ', month))
+
+
+ggmap(map) +
+    # ylim(-25.5, -24.5) +
+    coord_cartesian()  +
+  geom_point(data = temp, 
+             aes(x = lng, y = lat, size = Specimens),
+             alpha = 0.4,
+             color = 'darkred') +
+  facet_wrap(~month, ncol = 3) +
+  xlab('Longitude') +
+  ylab('Latitude') +
+  ggtitle('Specimens by area over time')
+
+```
+
+
+
+## Over time by space and species
+
+```{r, fig.height = 8}
+
+# Group by month, location
+temp <- df %>%
+  group_by(month, lng, lat, Species = a5species) %>%
+  summarise(Specimens = n()) %>%
+  ungroup %>%
+  mutate(month= paste0('Month ', month))
+
+# ggplot() +
+#   coord_map() +
+#   geom_polygon(data = maputo_fortified,
+#        aes(x = long, y =lat, group = group), fill = 'grey', color = 'white') +
+#   theme_tufte() +
+#   theme(axis.ticks.length = unit(0.001, "mm")) + labs(x=NULL, y=NULL) +
+#   theme(axis.line=element_blank(),
+#       axis.text.x=element_blank(),
+#       axis.text.y=element_blank(),
+#       axis.ticks=element_blank(),
+#       axis.title.x=element_blank(),
+#       axis.title.y=element_blank(),
+#       # legend.position="none",
+#       panel.background=element_blank(),
+#       panel.border=element_blank(),
+#       panel.grid.major=element_blank(),
+#       panel.grid.minor=element_blank(),
+#       plot.background=element_blank()) +
+#   geom_point(data = temp, 
+#              aes(x = lng, y = lat,
+#                  # color = Species
+#                  size = Specimens),
+#              alpha = 0.4) +
+#   facet_grid(month ~ Species) +
+#   xlab('Longitude') +
+#   ylab('Latitude') +
+#   ggtitle('Specimens by area over time')
+```
+
+
+
+```{r}
+species <- unique(sort(temp$Species))
+for (i in 1:length(species)){
+  sub_temp <- temp %>%
+    filter(Species == species[i])
+  
+  g <- ggplot() +
+  coord_map() +
+  geom_polygon(data = maputo_fortified,
+       aes(x = long, y =lat, group = group), fill = 'grey', color = 'white') +
+  theme_tufte() +
+  theme(axis.ticks.length = unit(0.001, "mm")) + labs(x=NULL, y=NULL) +
+  theme(axis.line=element_blank(),
+      axis.text.x=element_blank(),
+      axis.text.y=element_blank(),
+      axis.ticks=element_blank(),
+      axis.title.x=element_blank(),
+      axis.title.y=element_blank(),
+      # legend.position="none",
+      panel.background=element_blank(),
+      panel.border=element_blank(),
+      panel.grid.major=element_blank(),
+      panel.grid.minor=element_blank(),
+      plot.background=element_blank()) +
+  geom_point(data = sub_temp, 
+             aes(x = lng, y = lat,
+                 # color = Species
+                 color = 'darkred',
+                 size = Specimens),
+             alpha = 0.4) +
+  facet_grid(. ~ month) +
+  xlab('Longitude') +
+  ylab('Latitude') +
+  ggtitle(paste0(species[i], ' by area over time'))
+  print(g)
+}
+```  
+  
