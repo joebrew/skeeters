@@ -267,8 +267,8 @@ for (i in 1:length(species)){
   geom_point(data = sub_temp, 
              aes(x = lng, y = lat,
                  # color = Species
-                 color = 'darkred',
                  size = Specimens),
+             color = 'darkred',
              alpha = 0.4) +
   facet_grid(. ~ month) +
   xlab('Longitude') +
